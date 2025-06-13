@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="ja" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>複合適性診断</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&family=Noto+Sans+JP:wght@400;500;700;900&display=swap" rel="stylesheet">
+    <!-- Chosen Palette: #20B8C7 -->
+    <!-- Application Structure Plan: A standalone, multi-test diagnostic application. The user journey is now: Select Test -> Comprehensive 24-question quiz -> LINE Official Account CTA -> Detailed Results. This fulfills the new requirement to replace the lead form with a LINE follow prompt, aiming to build a communication channel rather than just collecting static info. -->
+    <!-- Visualization & Content Choices: 
+        - LINE CTA Screen: A new screen inserted after the quiz prompts users to add the LINE account. It includes a direct link button and a separate button to proceed to results, creating a clear call to action before revealing the valuable diagnostic result. Method: HTML/JS.
+        - Quiz Selection: A multi-test selection screen remains the entry point. Method: HTML/JS.
+        - Quiz: Each of the 4 tests contains 24 unique, 4-choice questions with a progress bar. Method: HTML/JS.
+        - Results: The result page is customized for each test. A new section has been added to encourage sharing the result via LINE for further consultation, now with a prompt to send a screenshot. Method: HTML/JS/Chart.js.
+        - AI Integration: The Gemini API feature for generating themes remains within the results page. Method: Gemini API fetch call in JS.
+        - Copy: All text is direct, professional, and clear.
+    -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <style>
+        body {
+            font-family: 'Inter', 'Noto Sans JP', sans-serif;
+            background-color: #f8fafc; /* slate-50 */
+            color: #334155; /* slate-700 */
+        }
+        :root {
+            --c-main: #20B8C7;
+            --c-main-hover: #1aa0ac;
+            --c-main-light-bg: #ecfeff; /* cyan-50 */
+            --c-main-border: #a5f3fc; /* cyan-200 */
+            --c-text: #0e7490; /* cyan-700 */
+            --c-text-dark: #155e75; /* cyan-800 */
+        }
+        .progress-bar-inner {
+            transition: width 0.3s ease-in-out;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s ease-in-out infinite;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <header class="bg-white/80 backdrop-blur-lg sticky top-0 z-50 shadow-sm">
+        <div class="container mx-auto px-6 py-4 flex justify-between items-center">
+            <h1 class="text-2xl font-bold text-gray-900">複合適性診断</h1>
+             <button id="home-btn" class="hidden text-sm font-bold hover:underline" style="color:var(--c-main)">診断一覧に戻る</button>
+        </div>
+    </header>
+
+    <main class="flex-grow flex items-center justify-center py-12 md:py-16">
+        <div id="quiz-container" class="w-full max-w-3xl mx-auto bg-white p-8 md:p-12 rounded-2xl shadow-lg transition-all duration-500">
+            <div id="test-selection-area">
+                <h2 class="text-2xl md:text-3xl font-bold text-center text-gray-800">あなたの「個性」を見つけよう</h2>
+                <p class="text-center text-gray-600 mt-4 leading-relaxed">「やりたいことが見つからない」と悩んでいませんか？それはごく自然なことです。まだ、ご自身の個性や強みに気づいていないだけかもしれません。<br><br>ここでは、あなたの多面的な可能性を発見するために、いくつかの診断をご用意しました。気になるものから試してみて、ご自身の新たな側面を発見するきっかけにしてください。</p>
+                <div id="test-cards-container" class="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <!-- Test selection cards will be injected here -->
+                </div>
+            </div>
+
+            <div id="quiz-questions-area" class="hidden">
+                <!-- Questions will be injected here by JS -->
+            </div>
+            
+            <div id="lead-capture-area" class="hidden text-center">
+                 <h2 class="text-2xl font-bold text-gray-800">診断ありがとうございます！</h2>
+                 <p class="mt-4 text-gray-600">あと少しで結果が表示されます。<br>より詳しいアドバイスやイベント情報をお届けするために、ぜひLINE公式アカウントを「友だち追加」してください。</p>
+                 <div class="mt-8 space-y-4">
+                     <a href="https://lin.ee/ZCOOlRhC" target="_blank" class="block w-full text-white font-bold py-3 px-8 rounded-full text-lg hover:opacity-90 transition-opacity" style="background-color: #06C755;">
+                        LINEで友だち追加する
+                     </a>
+                     <button id="show-results-btn" class="w-full text-white font-bold py-3 px-8 rounded-full text-lg hover:opacity-90 transition-opacity" style="background-color:var(--c-main)">
+                        診断結果を見る
+                    </button>
+                 </div>
+                 <p class="text-xs text-gray-500 mt-4">※友だち追加をしなくても、診断結果をご覧いただけます。</p>
+            </div>
+
+            <div id="quiz-results-area" class="hidden text-center">
+                <h2 class="text-2xl md:text-3xl font-bold text-gray-800">診断結果</h2>
+                <p class="mt-2 text-gray-600">あなたのタイプはこちらです！</p>
+                
+                <div id="quiz-result-card" class="mt-8 opacity-0 transform -translate-y-4 transition-all duration-500">
+                    <!-- Result will be injected here by JS -->
+                </div>
+
+                <button id="restart-quiz-btn" class="mt-8 font-bold hover:underline" style="color:var(--c-main)">
+                   もう一度診断する
+                </button>
+            </div>
+        </div>
+    </main>
+
+    <footer class="bg-gray-100 text-gray-800 font-brand">
+        <div class="container mx-auto px-6 py-6 text-center text-sm">
+            <p>&copy; 2025 適性診断. All Rights Reserved.</p>
+        </div>
+    </footer>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const homeBtn = document.getElementById('home-btn');
+            const testSelectionArea = document.getElementById('test-selection-area');
+            const testCardsContainer = document.getElementById('test-cards-container');
+            const questionsArea = document.getElementById('quiz-questions-area');
+            const leadCaptureArea = document.getElementById('lead-capture-area');
+            const showResultsBtn = document.getElementById('show-results-btn');
+            const resultsArea = document.getElementById('quiz-results-area');
+            const resultCardContainer = document.getElementById('quiz-result-card');
+            const restartQuizBtn = document.getElementById('restart-quiz-btn');
+
+            let currentQuizKey = null;
+            let quizChart = null;
+            
+            const allQuizData = {
+                aptitude: {
+                    name: "適性タイプ診断",
+                    description: "あなたの思考のクセや興味の方向性から、4つの基本的なタイプを診断します。",
+                    labels: ['探究者', '共創者', '実践家', '表現者'],
+                    questions: [
+                        { q: "自由研究のテーマ、どんなものに惹かれますか？", a: [{ t: "まだ誰も知らない、専門的なテーマ", v: "explorer" }, { t: "地域の課題など、人と社会に関わるテーマ", v: "collaborator" }, { t: "アプリ開発など、具体的なモノづくりに繋がるテーマ", v: "practitioner" }, { t: "ドキュメンタリー制作など、自分の考えを発信するテーマ", v: "expresser" }] },
+                        { q: "新しい知識を得たとき、次にどうしますか？", a: [{ t: "さらに関連情報を調べ、理解を深める", v: "explorer" }, { t: "その知識について、誰かと話したくなる", v: "collaborator" }, { t: "学んだことを実際に試してみる", v: "practitioner" }, { t: "自分なりに図や文章でまとめて、記録に残す", v: "expresser" }] },
+                        { q: "調べ学習で、情報源として最も信頼するのは？", a: [{ t: "専門家による論文や、公的な統計データ", v: "explorer" }, { t: "その分野の専門家や、経験者へのインタビュー", v: "collaborator" }, { t: "自分の目で確かめた、一次情報", v: "practitioner" }, { t: "様々なメディアの記事を読み比べ、多角的な視点を得る", v: "expresser" }] },
+                        { q: "映画を観終わった後、どんな感想を持ちますか？", a: [{ t: "物語の伏線や構成の巧みさに感心する", v: "explorer" }, { t: "登場人物の気持ちに共感し、感動する", v: "collaborator" }, { t: "主人公の活躍に興奮し、自分も何かしたくなる", v: "practitioner" }, { t: "映像の美しさや音楽、監督のメッセージ性を考える", v: "expresser" }] },
+                        { q: "あなたのノートの取り方は、どちらに近いですか？", a: [{ t: "情報を整理し、論理的な繋がりが分かるように書く", v: "explorer" }, { t: "後で他の人にも分かりやすいように、丁寧な字で書く", v: "collaborator" }, { t: "要点だけを素早くメモし、詳細は頭で覚える", v: "practitioner" }, { t: "イラストやマインドマップを使って、視覚的に表現する", v: "expresser" }] },
+                        { q: "プレゼンテーションで最も重視するのは？", a: [{ t: "正確なデータと、論理的な説明", v: "explorer" }, { t: "聴き手との一体感や、共感を呼ぶ語りかけ", v: "collaborator" }, { t: "デモンストレーションなど、具体的な実演", v: "practitioner" }, { t: "人を惹きつける、デザイン性の高いスライド", v: "expresser" }] },
+                        { q: "文化祭の準備。あなたの役割は？", a: [{ t: "企画会議でアイデアを出し、全体の計画を練る", v: "explorer" }, { t: "メンバーの意見をまとめ、チームの雰囲気を良くする", v: "collaborator" }, { t: "必要なものを集めたり、実際に設営作業をする", v: "practitioner" }, { t: "ポスターや告知映像など、広報物を制作する", v: "expresser" }] },
+                        { q: "難しい課題に直面した時、どうしますか？", a: [{ t: "なぜ問題なのか、根本原因をじっくり考える", v: "explorer" }, { t: "友人や先生に相談し、多様な視点を取り入れる", v: "collaborator" }, { t: "とにかく試行錯誤。行動しながら解決策を探す", v: "practitioner" }, { t: "解決への道のりを記録し、後で振り返れるようにする", v: "expresser" }] },
+                        { q: "休日の過ごし方で、どちらが好きですか？", a: [{ t: "一人で図書館やカフェに行き、自分の時間を楽しむ", v: "explorer" }, { t: "友人と集まり、おしゃべりしたり、一緒に遊んだりする", v: "collaborator" }, { t: "スポーツやDIYなど、体を動かして何かを作る", v: "practitioner" }, { t: "美術館に行ったり、映画を観たりして感性を磨く", v: "expresser" }] },
+                        { q: "グループワークで、意見が対立したら？", a: [{ t: "両者の意見の長所・短所を分析し、最適な案を探す", v: "explorer" }, { t: "全員が納得できるまで、根気強く話し合いを続ける", v: "collaborator" }, { t: "まずは両方の案を少し試してみて、結果を見ることを提案する", v: "practitioner" }, { t: "議論の様子を客観的に観察し、対立の構図をメモする", v: "expresser" }] },
+                        { q: "新しいゲームを始めるとき、どうしますか？", a: [{ t: "攻略サイトを読み込み、効率的な進め方を研究する", v: "explorer" }, { t: "友人と情報を交換したり、一緒にプレイしたりする", v: "collaborator" }, { t: "チュートリアルは飛ばして、とにかくプレイしてみる", v: "practitioner" }, { t: "ゲームの世界観やストーリー、キャラクターデザインを楽しむ", v: "expresser" }] },
+                        { q: "将来の夢を語るとき、どんなことを話しますか？", a: [{ t: "専門的な知識を身につけ、その道のプロになりたい", v: "explorer" }, { t: "多くの人と協力し、社会に貢献できる仕事がしたい", v: "collaborator" }, { t: "自分の手で新しい事業やサービスを立ち上げたい", v: "practitioner" }, { t: "自分の作品やアイデアで、世界中の人を感動させたい", v: "expresser" }] },
+                        { q: "新しいガジェット。どう扱いますか？", a: [{ t: "取扱説明書を隅々まで読み、全機能を理解する", v: "explorer" }, { t: "友人の使い方を見て、便利な機能を教えてもらう", v: "collaborator" }, { t: "とにかく電源を入れ、色々なボタンを押して試す", v: "practitioner" }, { t: "開封の様子やデザインを写真に撮り、記録する", v: "expresser" }] },
+                        { q: "料理をする時、あなたのスタイルは？", a: [{ t: "レシピを正確に守り、分量や時間をきっちり計る", v: "explorer" }, { t: "誰かのために、喜んでもらえるようなメニューを考える", v: "collaborator" }, { t: "レシピは見ずに、目分量や感覚でアレンジする", v: "practitioner" }, { t: "完成した料理を美しく盛り付け、写真を撮る", v: "expresser" }] },
+                        { q: "興味のある分野について、どう学びたいですか？", a: [{ t: "本や論文を読み、体系的に知識を身につけたい", v: "explorer" }, { t: "その分野の専門家や、同じ興味を持つ仲間と話したい", v: "collaborator" }, { t: "ワークショップやインターンに参加し、実践的に学びたい", v: "practitioner" }, { t: "学んだことをブログや動画で発信し、自分の考えを深めたい", v: "expresser" }] },
+                        { q: "旅行の計画を立てるなら？", a: [{ t: "歴史や文化を深く学べる、テーマ性のある旅", v: "explorer" }, { t: "友人や家族と楽しめる、賑やかな旅", v: "collaborator" }, { t: "アクティビティが満載の、体験型の旅", v: "practitioner" }, { t: "美しい景色や芸術に触れる、感性を刺激する旅", v: "expresser" }] },
+                        { q: "問題解決のアプローチとして、どちらを好みますか？", a: [{ t: "時間をかけてでも、根本的な原因を突き止めて解決する", v: "explorer" }, { t: "関係者と協力し、合意形成を図りながら解決する", v: "collaborator" }, { t: "すぐに行動を起こし、試行錯誤しながら解決する", v: "practitioner" }, { t: "解決策を複数考え、それぞれのメリット・デメリットを比較検討する", v: "expresser" }] },
+                        { q: "部屋の模様替え。何から始めますか？", a: [{ t: "家具の配置を設計図に書き、効率的な動線を考える", v: "explorer" }, { t: "家族や友人に相談し、アドバイスをもらう", v: "collaborator" }, { t: "とりあえず家具を動かしながら、しっくりくる配置を探す", v: "practitioner" }, { t: "理想の部屋のイメージを、雑誌やSNSで集める", v: "expresser" }] },
+                        { q: "あなたにとって、SNSとは？", a: [{ t: "最新のニュースや専門的な知識を得るための情報源", v: "explorer" }, { t: "友人や仲間と繋がり、コミュニケーションを楽しむ場", v: "collaborator" }, { t: "自分の活動や成果を発信し、フィードバックを得る場", v: "practitioner" }, { t: "自分の世界観や作品を発表し、共感してくれる人を探す場", v: "expresser" }] },
+                        { q: "あなたにとって「成功」とは何ですか？", a: [{ t: "誰も解けなかった問題を、論理的に解明すること", v: "explorer" }, { t: "チームで大きな目標を達成し、喜びを分かち合うこと", v: "collaborator" }, { t: "自分のアイデアを形にし、世の中にインパクトを与えること", v: "practitioner" }, { t: "自分の表現活動が、多くの人の心を動かし、認められること", v: "expresser" }] },
+                        { q: "どんな時に「やりがい」を感じますか？", a: [{ t: "複雑なパズルが解けた時や、知的好奇心が満たされた時", v: "explorer" }, { t: "自分の行動で、誰かが喜んでくれたり、助かったりした時", v: "collaborator" }, { t: "目標に向かって努力し、具体的な成果が出た時", v: "practitioner" }, { t: "自分のアイデアや作品が、誰かに「面白い」と言ってもらえた時", v: "expresser" }] },
+                        { q: "尊敬する人物は、どんな人ですか？", a: [{ t: "偉大な発見をした科学者や、深い知識を持つ研究者", v: "explorer" }, { t: "多くの人をまとめ、社会を良くしたリーダーや活動家", v: "collaborator" }, { t: "誰もやらなかったことに挑戦し、新しい時代を築いた起業家", v: "practitioner" }, { t: "独自のスタイルで、世界に影響を与えた芸術家や作家", v: "expresser" }] },
+                        { q: "何かを記録する時、どんな方法を選びますか？", a: [{ t: "事実を客観的に、箇条書きやデータでまとめる", v: "explorer" }, { t: "その時の会話や、関わった人の様子を詳しく書き留める", v: "collaborator" }, { t: "行動計画やタスクリストを作成し、進捗を管理する", v: "practitioner" }, { t: "日記やエッセイのように、自分の感情や考えを交えて書く", v: "expresser" }] },
+                        { q: "10年後、どんな自分になっていたいですか？", a: [{ t: "ある分野の専門家として、知識を深め続けていたい", v: "explorer" }, { t: "信頼できる仲間たちと、社会に貢献する活動をしていたい", v: "collaborator" }, { t: "自分で事業を立ち上げ、新しい価値を生み出していたい", v: "practitioner" }, { t: "創作活動を通じて、自分らしい表現を続けていたい", v: "expresser" }] }
+                    ],
+                    results: {
+                        explorer: { title: "探究者", description: "物事の本質を深く掘り下げ、知的な探求に喜びを感じるタイプです。「なぜ？」を繰り返すことで、まだ見ぬ真実への扉を開きます。", strengths: ["論理的思考力", "分析力", "集中力"], growth: "時に視野が狭まりがちになることも。他者の意見を取り入れることで、思わぬ発見があるかもしれません。", themes: ["地元の商店街の衰退原因をデータから分析する", "特定の生物の生態に関する詳細な研究"], approach: "あなたの『なぜ？』を尊重し、専門的なリサーチ手法や論文執筆のスキルをご提供します。知的好奇心を学問的な成果へと高めていきましょう。" },
+                        collaborator: { title: "共創者", description: "人と人、アイデアとアイデアを繋ぐことに長けたチームの要となるタイプです。対話を通じて、一人では生み出せない大きな価値を創造します。", strengths: ["協調性", "コミュニケーション能力", "共感力"], growth: "ご自身の意見を主張するのが少し苦手な面も。議論をリードする経験を積むことで、さらに大きく成長できます。", themes: ["地域の高齢者と高校生を繋ぐ新サービスの開発", "多文化共生をテーマにしたワークショップの企画・運営"], approach: "あなたの対話力を活かすフィールドをご提供します。ファシリテーションやプレゼンテーションの技術を磨き、社会を巻き込む力を育みます。" },
+                        practitioner: { title: "実践家", description: "考えるよりもまず行動するタイプです。試行錯誤を恐れず、アイデアを次々と形にしていくエネルギーに溢れています。", strengths: ["行動力", "課題解決能力", "実行力"], growth: "行動が先行し、計画が少し曖昧になることも。目的意識を明確にすることで、行動がより大きな成果に繋がります。", themes: ["食品ロスをなくすためのアプリをプロトタイプ開発する", "使われなくなった公園を再生するプロジェクトを立ち上げる"], approach: "あなたのアイデアを形にするためのプロジェクトマネジメント手法をお伝えします。失敗を恐れず挑戦できる環境で、実践的なスキルを磨きましょう。" },
+                        expresser: { title: "表現者", description: "独自の視点や感性を、言葉や映像、デザインで伝えることが得意です。あなたの物語は、人の心を動かす力を持っています。", strengths: ["創造性", "表現力", "感受性"], growth: "情熱が先行し、論理的な裏付けが少し弱くなることも。客観的なデータを加えることで、表現に一層の説得力が生まれます。", themes: ["地域の魅力を伝えるドキュメンタリー映像の制作", "社会問題への意識を高めるためのアートプロジェクト"], approach: "あなたの感性を、論理的で説得力のある「物語」として構築するサポートをします。ポートフォリオ制作などを通じ、伝える力を本物の武器に変えましょう。" }
+                    }
+                },
+                learningStyle: {
+                    name: "学習スタイル診断",
+                    description: "あなたが最も効率的に知識を吸収できる学び方を発見します。",
+                    labels: ['視覚優位', '聴覚優位', '読書優位', '体験優位'],
+                     questions: [
+                        { q: "新しい英単語を覚えるとき、最も効果的な方法は？", a: [{ t: "単語が使われているイラストや写真を見る", v: "visual" }, { t: "単語の発音を何度も聞いたり、声に出したりする", v: "auditory" }, { t: "単語の定義や例文を繰り返し読む・書く", v: "reading" }, { t: "その単語を使って短い文章を作り、実際に使ってみる", v: "kinesthetic" }] },
+                        { q: "歴史の出来事を学ぶとき、どうするのが一番頭に入りますか？", a: [{ t: "年表や相関図を見て、全体の流れを把握する", v: "visual" }, { t: "その時代のドキュメンタリー番組や解説動画を観る", v: "auditory" }, { t: "教科書や参考書をじっくりと読み込む", v: "reading" }, { t: "歴史的な場所を訪れたり、博物館で展示物を見たりする", v: "kinesthetic" }] },
+                        { q: "数学の新しい公式を学ぶとき、どうしますか？", a: [{ t: "公式が図形的に何を意味するのかを理解する", v: "visual" }, { t: "先生や友人に、公式の成り立ちを説明してもらう", v: "auditory" }, { t: "証明を自分で追いながら、数式を何度も書く", v: "reading" }, { t: "実際にその公式を使って、たくさんの問題を解いてみる", v: "kinesthetic" }] },
+                        { q: "初めての場所への道順を覚えるには？", a: [{ t: "地図アプリを見て、ルート全体を頭に入れる", v: "visual" }, { t: "誰かに口頭で道順を説明してもらう", v: "auditory" }, { t: "住所や目印をメモに書き出す", v: "reading" }, { t: "実際に一度その道を歩いてみる", v: "kinesthetic" }] },
+                        { q: "講義の内容を復習するとき、最も効果的なのは？", a: [{ t: "自分で図やイラストを描きながらノートをまとめる", v: "visual" }, { t: "講義の録音を聴き直したり、友人と内容について話したりする", v: "auditory" }, { t: "配布された資料や教科書を何度も読み返す", v: "reading" }, { t: "講義で扱った実験や作業を、もう一度自分でやってみる", v: "kinesthetic" }] },
+                        { q: "複雑な機械の操作方法を学ぶには？", a: [{ t: "操作マニュアルの図解や動画を見る", v: "visual" }, { t: "詳しい人に、一つ一つの操作を声で説明してもらう", v: "auditory" }, { t: "操作マニュアルの文章をじっくり読む", v: "reading" }, { t: "実際に触って、色々なボタンを押してみる", v: "kinesthetic" }] },
+                        { q: "プレゼンの練習をするなら、どんな方法を選びますか？", a: [{ t: "鏡の前で、自分の姿勢や表情を確認しながら練習する", v: "visual" }, { t: "自分の声を録音して、話し方や間の取り方を確認する", v: "auditory" }, { t: "原稿を何度も読み返し、内容を完璧に覚える", v: "reading" }, { t: "実際に人の前で、何度も発表の練習をする", v: "kinesthetic" }] },
+                        { q: "興味のあるニュースを知る主な情報源は？", a: [{ t: "テレビのニュース番組や、図解の多いニュースサイト", v: "visual" }, { t: "ラジオやポッドキャストのニュース番組", v: "auditory" }, { t: "新聞やニュースアプリの記事", v: "reading" }, { t: "そのニュースに関連する場所に行ったり、イベントに参加したりする", v: "kinesthetic" }] },
+                        { q: "スポーツの新しい技を習得するには？", a: [{ t: "プロ選手のフォームを動画でスロー再生して見る", v: "visual" }, { t: "コーチからのアドバイスを注意深く聞く", v: "auditory" }, { t: "技術書を読んで、理論やコツを理解する", v: "reading" }, { t: "とにかく何度も繰り返し練習する", v: "kinesthetic" }] },
+                        { q: "グループでの議論中、あなたは？", a: [{ t: "ホワイトボードに図やキーワードを書き出しながら話を進める", v: "visual" }, { t: "人の意見に耳を傾け、議論の流れを整理するのが得意", v: "auditory" }, { t: "参考資料を読み込み、正確な情報に基づいて発言する", v: "reading" }, { t: "模型を使ったり、ジェスチャーを交えたりして説明する", v: "kinesthetic" }] },
+                        { q: "思い出を振り返るとき、何が一番鮮明ですか？", a: [{ t: "その時の景色や、人の表情", v: "visual" }, { t: "その場で流れていた音楽や、交わした会話", v: "auditory" }, { t: "旅行中に書いた日記や、手紙の内容", v: "reading" }, { t: "その場所の空気感や、体験した活動", v: "kinesthetic" }] },
+                        { q: "新しい言語を学ぶとしたら、何から始めますか？", a: [{ t: "単語カードや絵の多い教材から始める", v: "visual" }, { t: "ネイティブスピーカーの会話をたくさん聞く", v: "auditory" }, { t: "文法書をしっかり読んで、基礎から固める", v: "reading" }, { t: "すぐに簡単な会話を試してみる", v: "kinesthetic" }] },
+                        { q: "何かを選ぶとき、決め手になるのは？", a: [{ t: "デザインや見た目の美しさ", v: "visual" }, { t: "専門家や友人からの評判やおすすめの言葉", v: "auditory" }, { t: "製品のスペックやレビュー記事の詳細な比較", v: "reading" }, { t: "実際に手に取ってみたときの感触や使い心地", v: "kinesthetic" }] },
+                        { q: "オンライン授業を受けるとき、集中しやすいのは？", a: [{ t: "先生の表情やスライドがはっきり見える形式", v: "visual" }, { t: "音声がクリアで、雑音の少ない環境", v: "auditory" }, { t: "チャット機能でいつでも質問でき、資料がダウンロードできる形式", v: "reading" }, { t: "ブレイクアウトルームで、実際に作業やディスカッションができる形式", v: "kinesthetic" }] },
+                        { q: "映画を選ぶ基準は？", a: [{ t: "予告編の映像が魅力的", v: "visual" }, { t: "音楽や主題歌が素晴らしいと評判", v: "auditory" }, { t: "評論家のレビューやあらすじをしっかり読む", v: "reading" }, { t: "応援上映など、特別な体験ができる", v: "kinesthetic" }] },
+                        { q: "集中力が切れたときのリフレッシュ方法は？", a: [{ t: "窓の外の景色をぼーっと眺める", v: "visual" }, { t: "好きな音楽を聴く", v: "auditory" }, { t: "全く関係ない短い記事や本を読む", v: "reading" }, { t: "少し散歩したり、ストレッチをしたりする", v: "kinesthetic" }] },
+                        { q: "楽器の練習方法は？", a: [{ t: "楽譜や運指表をじっくり見る", v: "visual" }, { t: "お手本の演奏を何度も聴いて、音を真似る", v: "auditory" }, { t: "教則本を読み、基礎練習を繰り返す", v: "reading" }, { t: "とにかく楽器に触って、色々な音を出してみる", v: "kinesthetic" }] },
+                        { q: "道に迷ったらどうしますか？", a: [{ t: "周りの建物や看板を見て、自分の位置を確認する", v: "visual" }, { t: "近くの人に、声に出して道を尋ねる", v: "auditory" }, { t: "地図アプリやガイドブックの文字情報を頼りにする", v: "reading" }, { t: "勘を頼りに、とりあえず歩いてみる", v: "kinesthetic" }] },
+                        { q: "難しい概念を理解するために、どうしますか？", a: [{ t: "その概念を説明している図や動画を探す", v: "visual" }, { t: "誰かに自分なりに説明してみて、フィードバックをもらう", v: "auditory" }, { t: "その概念に関する文章を、要約しながら書き出す", v: "reading" }, { t: "その概念に関連する簡単なモデルを作ったり、実験したりする", v: "kinesthetic" }] },
+                        { q: "授業で最も印象に残るのは？", a: [{ t: "先生が見せてくれた、インパクトのある写真や映像", v: "visual" }, { t: "先生の面白い話や、心に残る言葉", v: "auditory" }, { t: "板書された重要なキーワードや数式", v: "reading" }, { t: "グループで行った実験や、校外学習", v: "kinesthetic" }] },
+                        { q: "ウェブサイトを見るとき、どこに注目しますか？", a: [{ t: "全体のレイアウトや、使われている写真・イラスト", v: "visual" }, { t: "埋め込まれている動画や音声コンテンツ", v: "auditory" }, { t: "見出しや本文のテキスト情報", v: "reading" }, { t: "ボタンの押し心地や、スクロールした時の動き", v: "kinesthetic" }] },
+                        { q: "何かを組み立てるとき、どうしますか？", a: [{ t: "説明書の図解を丁寧に見る", v: "visual" }, { t: "組み立て解説動画を見る", v: "auditory" }, { t: "説明書の文章を、手順通りにじっくり読む", v: "reading" }, { t: "部品を触りながら、試行錯誤して組み立てる", v: "kinesthetic" }] },
+                        { q: "友人に何かを説明するとき、どうしますか？", a: [{ t: "簡単な図や絵を描いて説明する", v: "visual" }, { t: "たとえ話を交えながら、言葉で丁寧に説明する", v: "auditory" }, { t: "要点をまとめたメモを渡しながら説明する", v: "reading" }, { t: "ジェスチャーをたくさん使ったり、実際にやってみせたりする", v: "kinesthetic" }] },
+                        { q: "一番楽しめる美術館の展示は？", a: [{ t: "色彩豊かな絵画や、迫力のある彫刻", v: "visual" }, { t: "音声ガイド付きの展示", v: "auditory" }, { t: "作品の背景や解説文が充実している展示", v: "reading" }, { t: "実際に触れたり、操作したりできる体験型の展示", v: "kinesthetic" }] }
+                    ],
+                    results: {
+                        visual: { title: "視覚優位タイプ", description: "図やグラフ、映像など、目で見て情報を捉えることが得意です。物事の全体像や関係性を、視覚的に把握することで理解が深まります。", strengths: ["全体像の把握", "空間認識", "イメージ力"], growth: "文字だけの情報や、音声だけの情報から内容を理解するのが少し苦手かもしれません。", themes: ["インフォグラフィック制作", "都市デザインの比較研究"], approach: "マインドマップやイラストを活用したノート作り、映像教材の活用をサポートします。あなたのアイデアを視覚的に表現するお手伝いをします。" },
+                        auditory: { title: "聴覚優位タイプ", description: "人の話を聞いたり、ディスカッションしたりする中で理解を深めます。言葉のニュアンスを聞き分ける力や、議論を整理する能力に長けています。", strengths: ["言語能力", "コミュニケーション", "傾聴力"], growth: "静かな環境でないと集中しにくい、図やグラフから情報を読み取るのが苦手、といった側面があるかもしれません。", themes: ["著名人へのインタビューとポッドキャスト制作", "方言の音声分析"], approach: "ディスカッションやインタビューの機会を設け、言語化と思考の整理をサポートします。あなたの「聞く力」と「話す力」を強みに変えましょう。" },
+                        reading: { title: "読書/記述優位タイプ", description: "文章を読んだり書いたりすることで、情報を正確にインプットし、自分の考えを整理することが得意です。", strengths: ["読解力", "文章構成力", "論理的思考"], growth: "実践的なスキルや、感覚的な内容を学ぶ際に、少し時間がかかることがあるかもしれません。", themes: ["特定の歴史的事件に関する文献調査", "社会問題に関するレポート作成"], approach: "あなたの興味に合わせた文献の推薦や、論文・レポート作成の技術的な指導を行います。あなたの「読み書き」の能力を、説得力のある文章力へと高めます。" },
+                        kinesthetic: { title: "体験優位タイプ", description: "実際に体を動かしたり、体験したりすることを通して学びます。実践の中でスキルを習得し、課題を解決していくプロセスを楽しみます。", strengths: ["実践力", "問題解決能力", "行動力"], growth: "じっと座って話を聞いたり、本を読んだりするだけの学習では、退屈してしまうことがあるかもしれません。", themes: ["地域の課題解決のためのボランティア活動", "簡単なロボットやアプリの制作"], approach: "フィールドワークや実験、ワークショップなど、実践的な学びの場を一緒に企画します。あなたの行動力を、社会にインパクトを与える経験へと繋げます。" }
+                    }
+                },
+                strength: {
+                    name: "強み発見診断",
+                    description: "あなたが持つ様々な能力の中から、特に秀でた「強み」を発見します。",
+                    labels: ['発想力', '計画力', '実行力', '協調力'],
+                    questions: [
+                       { q: "無人島に一つだけ持っていくなら？", a: [{ t: "どんなものでも作れそうな、万能ナイフ", v: "ideation" }, { t: "島から脱出するための、完璧な設計図", v: "planning" }, { t: "すぐに使える、頑丈なテントと食料", v: "execution" }, { t: "仲間と連絡を取るための、無線機", v: "harmony" }] },
+                       { q: "新しいプロジェクトを始める時、最もワクワクするのは？", a: [{ t: "誰も思いつかなかった、斬新なアイデアを考えている時", v: "ideation" }, { t: "目標達成までの、詳細なスケジュールを立てている時", v: "planning" }, { t: "計画を一つひとつ実行し、ゴールに近づいていると実感する時", v: "execution" }, { t: "チームメンバーと協力し、一体感が生まれる時", v: "harmony" }] },
+                       { q: "あなたの机の上は、どんな状態ですか？", a: [{ t: "アイデアの断片や、面白そうな本が散らばっている", v: "ideation" }, { t: "ToDoリストや手帳が、きちんと整理されている", v: "planning" }, { t: "今取り組んでいる課題の資料が、すぐ使えるように置かれている", v: "execution" }, { t: "友人との写真や、もらったプレゼントが飾られている", v: "harmony" }] },
+                       { q: "チームで課題に取り組む時、あなたの得意な役割は？", a: [{ t: "常識にとらわれない、新しい解決策を提案する", v: "ideation" }, { t: "誰が何をすべきか、役割分担やスケジュールを決める", v: "planning" }, { t: "決まったタスクを、責任を持って着実にこなす", v: "execution" }, { t: "メンバー間の意見を調整し、円滑なコミュニケーションを促す", v: "harmony" }] },
+                       { q: "物語を作るとしたら、何から始めますか？", a: [{ t: "誰も考えたことのない、ユニークな世界観の設定", v: "ideation" }, { t: "起承転結がはっきりした、全体のプロット", v: "planning" }, { t: "とにかく最初のシーンを書き始めて、物語を動かす", v: "execution" }, { t: "登場人物たちの関係性や、心の動き", v: "harmony" }] },
+                       { q: "あなたのスマートフォン。どんなアプリが多いですか？", a: [{ t: "マインドマップやメモなど、アイデアを書き留めるアプリ", v: "ideation" }, { t: "カレンダーやタスク管理など、スケジュールを整理するアプリ", v: "planning" }, { t: "語学学習や資格勉強など、目標達成のためのアプリ", v: "execution" }, { t: "SNSやメッセージなど、人と繋がるためのアプリ", v: "harmony" }] },
+                       { q: "文化祭のクラスTシャツのデザイン。どうしますか？", a: [{ t: "今までにない、奇抜で面白いデザインを考える", v: "ideation" }, { t: "予算や納期を考え、実現可能なデザインをいくつか提案する", v: "planning" }, { t: "デザインが決まったら、すぐに業者に発注し、進捗を管理する", v: "execution" }, { t: "クラス全員の意見を聞き、みんなが気に入るデザインを決める", v: "harmony" }] },
+                       { q: "「学び」とは、あなたにとって何ですか？", a: [{ t: "新しい視点や、世界の見方を発見すること", v: "ideation" }, { t: "目標を達成するための、体系的な知識やスキルを身につけること", v: "planning" }, { t: "できることが増え、自分自身が成長していると実感すること", v: "execution" }, { t: "他人との対話を通じて、自分の考えを深め、視野を広げること", v: "harmony" }] },
+                       { q: "トラブルが発生した時、最初にどうしますか？", a: [{ t: "「ピンチはチャンス」と捉え、新しい解決策を模索する", v: "ideation" }, { t: "問題の原因と影響範囲を分析し、対応策を冷静に検討する", v: "planning" }, { t: "まずは応急処置を行い、被害を最小限に食い止める", v: "execution" }, { t: "関係者に状況を共有し、協力して対応にあたる", v: "harmony" }] },
+                       { q: "あなたがリーダーになったら、どんなチームを作りたいですか？", a: [{ t: "メンバーが自由に意見を言い合える、創造的なチーム", v: "ideation" }, { t: "各自の役割が明確で、効率的に動けるチーム", v: "planning" }, { t: "目標達成への意欲が高く、行動力のあるチーム", v: "execution" }, { t: "お互いを尊重し、助け合える、雰囲気の良いチーム", v: "harmony" }] },
+                       { q: "何かを始めるとき、一番重要なのは？", a: [{ t: "ユニークなコンセプトや、革新的なビジョン", v: "ideation" }, { t: "しっかりとしたリサーチと、綿密な計画", v: "planning" }, { t: "とにかく最初の一歩を踏み出す、勇気と行動力", v: "execution" }, { t: "一緒に取り組む、信頼できる仲間", v: "harmony" }] },
+                       { q: "どんな言葉をかけられると、やる気が出ますか？", a: [{ t: "「そのアイデア、面白いね！」", v: "ideation" }, { t: "「計画通り、順調に進んでいるね」", v: "planning" }, { t: "「君なら最後までやり遂げられると信じているよ」", v: "execution" }, { t: "「君がいてくれると、チームの雰囲気が良くなるよ」", v: "harmony" }] },
+                       { q: "学校の規則について、どう思いますか？", a: [{ t: "もっと面白く、生徒が主体的に関われるような規則があればいいのに", v: "ideation" }, { t: "規則の目的や背景を理解し、効率的に運用する方法を考えたい", v: "planning" }, { t: "決まったことは、きちんと守るべきだ", v: "execution" }, { t: "生徒全員にとって、公平で納得感のある規則であるべきだ", v: "harmony" }] },
+                       { q: "余暇の過ごし方として、どれを選びますか？", a: [{ t: "まだ誰も知らないような、新しい趣味を探す", v: "ideation" }, { t: "資格取得など、将来の目標に向けた勉強をする", v: "planning" }, { t: "ランニングや筋トレなど、日々のルーティンをこなす", v: "execution" }, { t: "ボランティア活動など、誰かの役に立つことに時間を使う", v: "harmony" }] },
+                       { q: "あなたを物に例えるなら？", a: [{ t: "何でも書ける、真っ白なノート", v: "ideation" }, { t: "正確な時間を刻む、精密な時計", v: "planning" }, { t: "どんな道でも進める、丈夫なエンジン", v: "execution" }, { t: "様々なものを繋ぎ合わせる、強力な接着剤", v: "harmony" }] },
+                       { q: "「仕事」に何を求めますか？", a: [{ t: "常に新しいことに挑戦でき、創造性を発揮できること", v: "ideation" }, { t: "自分の役割や目標が明確で、キャリアプランが立てやすいこと", v: "planning" }, { t: "努力が具体的な成果として、目に見えること", v: "execution" }, { t: "良い同僚に恵まれ、チームで協力して働けること", v: "harmony" }] },
+                       { q: "どんな時にストレスを感じますか？", a: [{ t: "単調な作業や、創造性のないルールに縛られる時", v: "ideation" }, { t: "計画が崩れたり、予期せぬ事態が起きたりした時", v: "planning" }, { t: "物事がなかなか進まず、停滞している時", v: "execution" }, { t: "チーム内で対立が起きたり、人間関係がうまくいかなかったりした時", v: "harmony" }] },
+                       { q: "新しいアイデアが浮かんだら、どうしますか？", a: [{ t: "すぐにメモを取り、さらにアイデアを膨らませる", v: "ideation" }, { t: "そのアイデアが実現可能か、リサーチと計画を始める", v: "planning" }, { t: "簡単な試作品を作ったり、すぐに実行に移したりする", v: "execution" }, { t: "信頼できる友人に話し、意見や感想を聞く", v: "harmony" }] },
+                       { q: "あなたのヒーローはどんな人ですか？", a: [{ t: "世界を変える発明をした、天才的な発明家", v: "ideation" }, { t: "国をまとめ、未来への礎を築いた、優れた戦略家", v: "planning" }, { t: "不屈の精神で、偉大な記録を打ち立てたアスリート", v: "execution" }, { t: "人々を癒し、平和のために尽力した活動家", v: "harmony" }] },
+                       { q: "部屋に飾るなら、どんなアート？", a: [{ t: "見るたびに新しい発見がある、抽象的な現代アート", v: "ideation" }, { t: "精密に描かれた、建築物の設計図や都市の鳥瞰図", v: "planning" }, { t: "力強いエネルギーを感じる、ダイナミックな写真", v: "execution" }, { t: "人々の温かい表情が描かれた、肖像画や集合写真", v: "harmony" }] },
+                       { q: "「完璧」とは何だと思いますか？", a: [{ t: "誰も思いつかなかった、独創的なアイデアそのもの", v: "ideation" }, { t: "一切の無駄がなく、細部まで計算され尽くした計画", v: "planning" }, { t: "目標を100%達成し、具体的な結果を出すこと", v: "execution" }, { t: "関わる人全員が、心から満足し、笑顔になること", v: "harmony" }] },
+                       { q: "旅行のお土産、何を選びますか？", a: [{ t: "その土地でしか手に入らない、ユニークな雑貨", v: "ideation" }, { t: "事前にリサーチした、評判の良い定番のお菓子", v: "planning" }, { t: "日持ちがして配りやすい、実用的なもの", v: "execution" }, { t: "贈る相手の顔を思い浮かべながら、一人ひとり選ぶ", v: "harmony" }] },
+                       { q: "1日だけ特別な力が使えるとしたら？", a: [{ t: "どんなアイデアでも形にできる、創造の力", v: "ideation" }, { t: "未来を正確に予測できる、予知の力", v: "planning" }, { t: "どんなことでも最後までやり遂げられる、無限の体力", v: "execution" }, { t: "世界中の人と心を通わせられる、共感の力", v: "harmony" }] },
+                       { q: "あなたが一番評価されたい点は？", a: [{ t: "発想の面白さや、着眼点のユニークさ", v: "ideation" }, { t: "準備の周到さや、計画の正確さ", v: "planning" }, { t: "目標に対する、責任感の強さと実行力", v: "execution" }, { t: "気配りや、チームへの貢献度", v: "harmony" }] }
+                    ],
+                    results: {
+                        ideation: { title: "発想力タイプ", description: "常識にとらわれず、新しいアイデアを生み出すことが得意です。あなたのユニークな視点は、探究活動において大きな武器になります。", strengths: ["独創性", "好奇心", "柔軟性"], growth: "アイデアを実現するための、具体的な計画や地道な作業が少し苦手かもしれません。", themes: ["社会課題を解決する新しいビジネスモデルの提案", "身近な廃材を使ったアート作品の制作"], approach: "ブレインストーミングやアイデアソンを通じて、あなたのユニークな発想を具体的な企画へと昇華させます。アイデアを形にするためのプロセスを一緒に考えましょう。" },
+                        planning: { title: "計画力タイプ", description: "目標達成のために、先を見通して緻密な計画を立てることが得意です。物事を体系的に捉え、効率的に進める力があります。", strengths: ["分析力", "組織力", "先見性"], growth: "予期せぬ事態への対応や、計画の柔軟な変更が少し苦手かもしれません。", themes: ["地域のイベントの企画・運営計画の策定", "自分の学習効率を最大化するための年間計画作成"], approach: "プロジェクト管理のフレームワークを提供し、あなたの計画をより実現可能なものにするサポートをします。リスク管理の方法も一緒に学びましょう。" },
+                        execution: { title: "実行力タイプ", description: "決めたことを着実に、最後までやり遂げる力を持っています。高い集中力と責任感で、困難な課題にも立ち向かいます。", strengths: ["責任感", "持続力", "集中力"], growth: "行動する前に、様々な可能性を検討したり、長期的な視点を持ったりすることが少し苦手かもしれません。", themes: ["プログラミング学習と、簡単なアプリの開発", "地域の清掃活動の継続的な実施と報告"], approach: "タスク管理や進捗確認の方法を一緒に考え、あなたの目標達成を最後まで伴走します。あなたの実行力が最大限に発揮できる環境を整えます。" },
+                        harmony: { title: "協調力タイプ", description: "周りの意見を尊重し、チーム全体の力を最大限に引き出すことが得意です。人の気持ちを理解し、円滑な人間関係を築く力があります。", strengths: ["傾聴力", "共感力", "調整力"], growth: "自分の意見を主張したり、対立を恐れず議論したりすることが少し苦手かもしれません。", themes: ["地域の子供たちへの学習支援ボランティア", "多様な背景を持つ人々へのインタビュー調査"], approach: "チームビルディングやファシリテーションの機会を通じて、あなたの調整能力をさらに伸ばします。チームで成果を出す喜びを体験しましょう。" }
+                    }
+                },
+                problemSolving: {
+                    name: "課題解決アプローチ診断",
+                    description: "あなたが問題に直面したとき、どのような方法で解決する傾向があるかを診断します。",
+                    labels: ['分析型', '直感型', '堅実型', '革新型'],
+                    questions: [
+                        { q: "パソコンの調子が悪くなった。まずどうしますか？", a: [{ t: "エラーメッセージを正確に記録し、原因をネットで徹底的に調べる", v: "analytical" }, { t: "とりあえず再起動したり、怪しいと思う箇所をいじってみる", v: "intuitive" }, { t: "以前同じような問題が起きた時の対処法を試す", v: "steady" }, { t: "この際、新しいOSやソフトを試す機会だと考える", v: "innovative" }] },
+                        { q: "意見がまとまらない会議。あなたならどうしますか？", a: [{ t: "各意見のメリット・デメリットをホワイトボードに書き出し、客観的に比較する", v: "analytical" }, { t: "その場の雰囲気や、発言者の表情から「本音」を探る", v: "intuitive" }, { t: "多数決や、過去の成功事例に基づいた判断を提案する", v: "steady" }, { t: "全く新しい第3の選択肢を提案し、議論の前提を覆す", v: "innovative" }] },
+                        { q: "テストの点数が悪かった。次にどうしますか？", a: [{ t: "間違えた問題を分類し、自分の弱点がどこにあるかを分析する", v: "analytical" }, { t: "「今回はたまたま」と考え、あまり深く悩まずに次へ気持ちを切り替える", v: "intuitive" }, { t: "これまでの勉強法を見直し、より効果的な方法を着実に試す", v: "steady" }, { t: "今までとは全く違う、新しい参考書や勉強アプリを試してみる", v: "innovative" }] },
+                        { q: "知らない単語が出てきたら、どうやって意味を調べますか？", a: [{ t: "複数の辞書を比較し、最も正確な定義や語源を調べる", v: "analytical" }, { t: "前後の文脈から、なんとなく意味を推測する", v: "intuitive" }, { t: "いつも使っている、信頼できる一つの辞書で調べる", v: "steady" }, { t: "画像検索や動画検索を使い、視覚的なイメージで理解する", v: "innovative" }] },
+                        { q: "友人と喧嘩をしてしまいました。どうやって仲直りしますか？", a: [{ t: "喧嘩の原因を冷静に分析し、論理的に解決策を話し合う", v: "analytical" }, { t: "時間が解決してくれると信じ、相手からの連絡を待つ", v: "intuitive" }, { t: "まずは自分から「ごめんね」と謝り、関係の修復を優先する", v: "steady" }, { t: "共通の友人に間に入ってもらったり、手紙を書いたりして、普段とは違う方法で気持ちを伝える", v: "innovative" }] },
+                        { q: "目的地までのルートが複数あります。どうやって選びますか？", a: [{ t: "距離、時間、料金を比較検討し、最も合理的なルートを選ぶ", v: "analytical" }, { t: "その日の気分や、なんとなく面白そうな名前の道を選ぶ", v: "intuitive" }, { t: "いつも使っている、慣れた道を選ぶ", v: "steady" }, { t: "まだ通ったことのない、新しい道を選んでみる", v: "innovative" }] },
+                        { q: "どちらのアルバイトに興味がありますか？", a: [{ t: "データ入力や市場調査など、正確性が求められる仕事", v: "analytical" }, { t: "接客業など、マニュアル通りではない対応が求められる仕事", v: "intuitive" }, { t: "レジ打ちや品出しなど、決められた手順をこなす仕事", v: "steady" }, { t: "新商品のポップ制作など、自分のアイデアを活かせる仕事", v: "innovative" }] },
+                        { q: "あなたの部屋の片づけ方は？", a: [{ t: "物の種類ごとにカテゴリー分けし、ラベリングして収納する", v: "analytical" }, { t: "その時の気分で、一気に片づける場所とそうでない場所がある", v: "intuitive" }, { t: "毎日決まった時間に、少しずつ片づける習慣がある", v: "steady" }, { t: "収納グッズを工夫したり、家具の配置を変えたりして、根本的に解決しようとする", v: "innovative" }] },
+                        { q: "今日の夕食のメニュー、どうやって決めますか？", a: [{ t: "冷蔵庫の中身と栄養バランスを考え、献立を論理的に組み立てる", v: "analytical" }, { t: "その時、ふと「食べたい」と思ったものを作る", v: "intuitive" }, { t: "いつも作る、定番の得意料理にする", v: "steady" }, { t: "ネットで見つけた、作ったことのない新しいレシピに挑戦する", v: "innovative" }] },
+                        { q: "「良いリーダー」とは、どんな人だと思いますか？", a: [{ t: "的確なデータ分析に基づき、冷静な判断を下せる人", v: "analytical" }, { t: "チームの空気感を読み取り、メンバーのやる気を引き出せる人", v: "intuitive" }, { t: "ルールを明確に示し、一貫した態度でチームを導ける人", v: "steady" }, { t: "大胆なビジョンを掲げ、チームを新たなステージに導ける人", v: "innovative" }] },
+                        { q: "どちらのドキュメンタリー番組が好きですか？", a: [{ t: "科学的な実験や検証で、謎を解明していく番組", v: "analytical" }, { t: "予測不能な展開が魅力の、野生動物のドキュメンタリー", v: "intuitive" }, { t: "ある職人の、長年の仕事ぶりを丁寧に追った番組", v: "steady" }, { t: "社会の常識を覆すような、新しい取り組みを紹介する番組", v: "innovative" }] },
+                        { q: "休日に突然、丸一日自由な時間ができました。どうしますか？", a: [{ t: "時間を最大限有効に使うため、分刻みのスケジュールを立てる", v: "analytical" }, { t: "特に何も決めず、その時の気分でぶらぶら過ごす", v: "intuitive" }, { t: "溜まっていた家事や、普段やっている趣味に時間を使う", v: "steady" }, { t: "普段は行けないような、少し遠い場所へ行ってみる", v: "innovative" }] },
+                        { q: "あなたが最も避けたい状況は？", a: [{ t: "感情論や根拠のない話で、議論が進まない状況", v: "analytical" }, { t: "細かいルールやマニュアルに、厳格に従わなければならない状況", v: "intuitive" }, { t: "やり方が決まっておらず、何をすべきか分からない状況", v: "steady" }, { t: "毎日同じことの繰り返しで、変化のない退屈な状況", v: "innovative" }] },
+                        { q: "投資をするとしたら、どんなスタイルを選びますか？", a: [{ t: "企業の財務状況や市場データを徹底的に分析し、割安な銘柄に投資する", v: "analytical" }, { t: "世の中のトレンドや、自分の「勘」を信じて、成長性の高そうな銘柄に投資する", v: "intuitive" }, { t: "専門家が推奨する、安定した実績のある銘柄に、長期的に積立投資する", v: "steady" }, { t: "まだ誰も注目していない、将来性が未知数の新しい技術を持つ企業に投資する", v: "innovative" }] },
+                        { q: "どちらの先生の授業が好きですか？", a: [{ t: "常に論理的で、説明に一切の無駄がない先生", v: "analytical" }, { t: "時々脱線するけれど、話が面白くて惹きつけられる先生", v: "intuitive" }, { t: "授業計画通りに、毎回きちんと授業を進めてくれる先生", v: "steady" }, { t: "ディスカッションや実験など、新しい形式の授業を取り入れる先生", v: "innovative" }] },
+                        { q: "「良いデザイン」とは何だと思いますか？", a: [{ t: "情報が整理されていて、誰にでも分かりやすいデザイン", v: "analytical" }, { t: "理屈では説明できないけれど、なぜか心惹かれるデザイン", v: "intuitive" }, { t: "流行に左右されず、長く使える普遍的なデザイン", v: "steady" }, { t: "今までの常識を覆すような、斬新なデザイン", v: "innovative" }] },
+                        { q: "グループ旅行の幹事になりました。どうしますか？", a: [{ t: "交通手段や宿泊先、観光地の情報を徹底的に調べ、複数のプランを比較検討する", v: "analytical" }, { t: "「きっと何とかなる」と考え、大まかな方向性だけ決めてメンバーに任せる", v: "intuitive" }, { t: "過去の旅行の経験を参考に、失敗のない安定したプランを立てる", v: "steady" }, { t: "普通の観光旅行ではなく、何か特別な体験ができるような、ユニークな企画を提案する", v: "innovative" }] },
+                        { q: "どんなミスをしやすいですか？", a: [{ t: "細部にこだわりすぎて、全体を見るのを忘れてしまう", v: "analytical" }, { t: "細かい確認を怠って、ケアレスミスをしてしまう", v: "intuitive" }, { t: "前例のないことへの対応に、戸惑ってしまう", v: "steady" }, { t: "アイデアが先行して、現実的な制約を見落としてしまう", v: "innovative" }] },
+                        { q: "難しい本を読むとき、どうしますか？", a: [{ t: "章ごとに要約を作り、全体の構造を理解しながら読み進める", v: "analytical" }, { t: "分からない部分があっても、とりあえず最後まで一気に読んでみる", v: "intuitive" }, { t: "信頼できる解説書や、要約サイトを参考にする", v: "steady" }, { t: "その本の内容について、全く違う分野の知識と結びつけて考えてみる", v: "innovative" }] },
+                        { q: "あなたの好きな言葉は？", a: [{ t: "「事実は小説よりも奇なり」", v: "analytical" }, { t: "「案ずるより産むが易し」", v: "intuitive" }, { t: "「継続は力なり」", v: "steady" }, { t: "「常識を疑え」", v: "innovative" }] },
+                        { q: "進路を選ぶ上で、最も重視することは？", a: [{ t: "卒業後の就職率や、取得できる資格などの客観的なデータ", v: "analytical" }, { t: "その学校の雰囲気や、自分の直感的な「好き」という気持ち", v: "intuitive" }, { t: "親や先生、先輩からのアドバイスや、世間的な評価", v: "steady" }, { t: "まだ新しい分野で、将来性が未知数でも、挑戦できる環境", v: "innovative" }] },
+                        { q: "何かを判断するとき、あなたは？", a: [{ t: "感情に流されず、常に冷静で客観的な判断を心がける", v: "analytical" }, { t: "理屈よりも、自分の心の声や「しっくりくる感じ」を大切にする", v: "intuitive" }, { t: "大きなリスクは避け、安全で確実な選択をすることが多い", v: "steady" }, { t: "周りとは違う、あえて少数派の意見を選ぶことに魅力を感じる", v: "innovative" }] },
+                        { q: "どちらのタイプの友人といるのが心地よいですか？", a: [{ t: "知的な会話ができ、論理的に物事を話せる友人", v: "analytical" }, { t: "一緒にいて、何も話さなくても気まずくならない、感性の合う友人", v: "intuitive" }, { t: "約束や時間をきちんと守る、信頼できる友人", v: "steady" }, { t: "いつも新しい刺激や、面白い話題を提供してくれる友人", v: "innovative" }] },
+                        { q: "あなたの課題解決は、どちらかというと？", a: [{ t: "時間がかかっても、根本から解決したい", v: "analytical" }, { t: "ひらめきで、一気に解決したい", v: "intuitive" }, { t: "過去の事例を参考に、着実に解決したい", v: "steady" }, { t: "誰も思いつかない方法で、鮮やかに解決したい", v: "innovative" }] }
+                    ],
+                    results: {
+                        analytical: { title: "分析型", description: "データや事実に基づいて、物事を論理的に分析し、最適な解決策を導き出します。複雑な情報を整理し、構造化することが得意です。", strengths: ["論理的思考", "情報収集力", "客観性"], growth: "人の感情や、目に見えない要素を見落としがちになることも。データだけでなく、現場の空気感も大切にすると、より良い判断ができます。", themes: ["複数サービスの比較分析", "市場調査とデータに基づいた事業提案"], approach: "リサーチやデータ分析のスキルをさらに伸ばし、あなたの分析に説得力を持たせるサポートをします。フレームワーク思考を身につけ、思考を整理するお手伝いをします。" },
+                        intuitive: { title: "直感型", description: "経験からくる「勘」や、物事の本質を瞬時に見抜く力で、課題を解決します。固定観念にとらわれない、柔軟な発想が魅力です。", strengths: ["洞察力", "柔軟性", "発想力"], growth: "判断の根拠を、他者に説明するのが少し苦手かもしれません。自分の直感を言語化する訓練が、周りを巻き込む力に繋がります。", themes: ["新サービスのコンセプト企画", "未来予測に基づくシナリオプランニング"], approach: "あなたの直感を言語化し、他者を説得するための論理的な根拠を見つけるお手伝いをします。そのユニークな視点を、具体的な企画へと昇華させましょう。" },
+                        steady: { title: "堅実型", description: "過去の経験や、確立された方法を用いて、着実に問題を解決していきます。真面目で責任感が強く、周りからの信頼も厚いタイプです。", strengths: ["責任感", "継続力", "安定性"], growth: "前例のないことへの対応に、戸惑ってしまうことがあるかもしれません。時には、思い切って新しい方法を試す勇気も必要です。", themes: ["既存のイベントの改善運営", "地域の伝統文化の継承活動"], approach: "あなたの堅実さを活かしつつ、新しい視点やアプローチを取り入れることで、応用力を高めます。着実な努力が大きな成果に繋がるよう、伴走します。" },
+                        innovative: { title: "革新型", description: "既存の枠組みにとらわれず、全く新しい視点から画期的な解決策を生み出します。常に変化を求め、新しいことに挑戦する起業家精神を持っています。", strengths: ["創造性", "挑戦心", "改革力"], growth: "アイデアが先行し、現実的な制約や地道な作業を見落としがちになることも。計画性を身につけることで、あなたのアイデアはさらに輝きます。", themes: ["社会課題を解決する新規事業立案", "常識を覆すアートプロジェクト"], approach: "あなたの斬新なアイデアを、実現可能なプロジェクトへと落とし込むための計画作りをサポートします。失敗を恐れずに挑戦できる環境を提供します。" }
+                    }
+                }
+            };
+            
+            function initTestSelection() {
+                testCardsContainer.innerHTML = '';
+                Object.keys(allQuizData).forEach(key => {
+                    const test = allQuizData[key];
+                    const card = document.createElement('div');
+                    card.className = "p-6 bg-white rounded-lg shadow-md hover:shadow-xl transition-shadow cursor-pointer border";
+                    card.innerHTML = `
+                        <h3 class="font-bold text-xl" style="color: var(--c-main)">${test.name}</h3>
+                        <p class="text-sm text-gray-600 mt-2">${test.description}</p>
+                        <button class="start-quiz-btn w-full mt-4 text-white font-bold py-2 px-4 rounded-full text-sm hover:opacity-90 transition-opacity" style="background-color:var(--c-main)">この診断を始める</button>
+                    `;
+                    card.querySelector('.start-quiz-btn').addEventListener('click', () => startQuiz(key));
+                    testCardsContainer.appendChild(card);
+                });
+            }
+
+            function showHomeScreen() {
+                testSelectionArea.classList.remove('hidden');
+                questionsArea.classList.add('hidden');
+                leadCaptureArea.classList.add('hidden');
+                resultsArea.classList.add('hidden');
+                homeBtn.classList.add('hidden');
+            }
+            
+            function startQuiz(key) {
+                currentQuizKey = key;
+                const quiz = allQuizData[currentQuizKey];
+                quiz.scores = {};
+                // Correctly initialize scores for the current test
+                const resultKeys = Object.keys(quiz.results);
+                resultKeys.forEach(k => {
+                    quiz.scores[k] = 0;
+                });
+                
+                quiz.currentQuestion = 0;
+
+                testSelectionArea.classList.add('hidden');
+                questionsArea.classList.remove('hidden');
+                resultsArea.classList.add('hidden');
+                leadCaptureArea.classList.add('hidden');
+                homeBtn.classList.remove('hidden');
+                showQuestion();
+            }
+
+            function showQuestion() {
+                const quiz = allQuizData[currentQuizKey];
+                const q = quiz.questions[quiz.currentQuestion];
+                let answersHtml = q.a.map((answer, index) => `
+                    <button data-type="${answer.v}" class="quiz-answer w-full text-left p-4 border rounded-lg cursor-pointer hover:bg-white transition" style="border-color: var(--c-main-border)">
+                        <span class="font-bold mr-2" style="color:var(--c-main)">${String.fromCharCode(65 + index)}.</span> ${answer.t}
+                    </button>
+                `).join('');
+
+                const progress = ((quiz.currentQuestion + 1) / quiz.questions.length) * 100;
+
+                questionsArea.innerHTML = `
+                    <div class="mb-4">
+                        <div class="flex justify-between items-center mb-1">
+                            <span class="text-sm font-medium text-gray-700">質問 ${quiz.currentQuestion + 1} / ${quiz.questions.length}</span>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-2.5">
+                            <div class="progress-bar-inner h-2.5 rounded-full" style="width: ${progress}%; background-color: var(--c-main)"></div>
+                        </div>
+                    </div>
+                    <p class="font-bold text-xl mb-6">${q.q}</p>
+                    <div class="space-y-3">${answersHtml}</div>
+                `;
+                
+                document.querySelectorAll('.quiz-answer').forEach(btn => {
+                    btn.addEventListener('click', handleAnswer);
+                });
+            }
+            
+            function handleAnswer(e) {
+                const selectedType = e.currentTarget.dataset.type;
+                allQuizData[currentQuizKey].scores[selectedType]++;
+                allQuizData[currentQuizKey].currentQuestion++;
+                if (allQuizData[currentQuizKey].currentQuestion < allQuizData[currentQuizKey].questions.length) {
+                    showQuestion();
+                } else {
+                    showLeadCaptureForm();
+                }
+            }
+            
+            function showLeadCaptureForm() {
+                questionsArea.classList.add('hidden');
+                leadCaptureArea.classList.remove('hidden');
+            }
+
+            showResultsBtn.addEventListener('click', () => {
+                leadCaptureArea.classList.add('hidden');
+                showResults();
+            });
+
+            function showResults() {
+                resultsArea.classList.remove('hidden');
+
+                const quiz = allQuizData[currentQuizKey];
+                const sortedScores = Object.entries(quiz.scores).sort((a, b) => b[1] - a[1]);
+                
+                if (!sortedScores || sortedScores.length === 0) {
+                    resultCardContainer.innerHTML = `<p class="text-red-600">診断結果の生成中にエラーが発生しました。</p>`;
+                    return;
+                }
+
+                const primaryType = sortedScores[0][0];
+                quiz.currentResultType = primaryType;
+                const resultData = quiz.results[primaryType];
+                
+                let resultTitle;
+                if (sortedScores.length > 1 && sortedScores[0][1] === sortedScores[1][1]) {
+                    resultTitle = `あなたは【${quiz.results[sortedScores[0][0]].title}】と【${quiz.results[sortedScores[1][0]].title}】のハイブリッドタイプです。`;
+                } else if (sortedScores.length > 1) {
+                    resultTitle = `あなたは【${quiz.results[sortedScores[0][0]].title}】を軸に、【${quiz.results[sortedScores[1][0]].title}】の側面も持つタイプです。`;
+                } else {
+                    resultTitle = `あなたは【${quiz.results[primaryType].title}】タイプです。`;
+                }
+
+                resultCardContainer.innerHTML = `
+                    <div class="bg-white rounded-xl p-6 md:p-8 text-left">
+                        <h3 class="text-xl font-bold text-gray-800">${resultTitle}</h3>
+                        <p class="mt-4 text-gray-700">${resultData.description}</p>
+                        <div class="grid md:grid-cols-2 gap-6 mt-6">
+                            <div>
+                               <div class="chart-container" style="height: 300px; max-height: 350px;">
+                                    <canvas id="resultChart"></canvas>
+                               </div>
+                            </div>
+                            <div>
+                                ${resultData.strengths ? `<h4 class="font-bold text-gray-800">あなたの強み</h4><div class="flex flex-wrap gap-2 mt-2">${resultData.strengths.map(s => `<span class="bg-gray-100 text-gray-700 text-sm px-2 py-1 rounded border">${s}</span>`).join('')}</div>` : ''}
+                                ${resultData.growth ? `<h4 class="font-bold text-gray-800 mt-4">今後の課題</h4><p class="text-sm text-gray-600 mt-2">${resultData.growth}</p>` : ''}
+                                ${resultData.themes ? `<h4 class="font-bold text-gray-800 mt-4">おすすめの学習アプローチ</h4><ul class="list-disc list-inside text-sm text-gray-600 mt-2 space-y-1">${resultData.themes.map(t => `<li>${t}</li>`).join('')}</ul>` : ''}
+                            </div>
+                        </div>
+                        <div class="mt-6 p-4 rounded-lg" style="background-color: var(--c-main-light-bg); border: 1px solid var(--c-main-border)">
+                             <h4 class="font-bold" style="color:var(--c-text-dark)">あなたのタイプを活かすには</h4>
+                             <p class="text-sm text-gray-700 mt-2">${resultData.approach}</p>
+                        </div>
+                        <div class="mt-6 p-6 bg-white rounded-lg border border-dashed">
+                             <h4 class="font-bold text-gray-800 text-center">AIがあなただけのテーマを提案します</h4>
+                             <p class="text-sm text-gray-600 mt-2 text-center">あなたの診断結果と興味を掛け合わせ、AIが探究テーマのヒントを提案します。</p>
+                             <div class="mt-4">
+                                <input type="text" id="ai-interests-input" placeholder="例：歴史、ゲーム、環境問題" class="w-full p-2 border rounded-md">
+                             </div>
+                             <div class="mt-4 text-center">
+                                <button id="ai-brainstorm-btn" class="text-white font-bold py-2 px-4 rounded-full text-sm hover:opacity-80 transition-opacity inline-flex items-center justify-center" style="background-color:var(--c-main)">✨ AIに探究テーマのアイデアを相談する</button>
+                             </div>
+                             <div id="ai-result-container" class="mt-4"></div>
+                        </div>
+                        <div class="mt-8 text-center">
+                            <a href="#" id="share-line-btn" class="inline-block w-full sm:w-auto text-white font-bold py-3 px-8 rounded-full text-lg hover:opacity-90 transition-opacity" style="background-color: #06C755;">
+                                LINEで結果を共有して相談する
+                            </a>
+                            <p class="text-xs text-gray-500 mt-2">診断結果のスクリーンショットも一緒に送っていただけると、よりスムーズにご案内できます。</p>
+                        </div>
+                    </div>
+                `;
+                
+                setTimeout(() => {
+                   resultCardContainer.classList.remove('opacity-0', '-translate-y-4');
+                   resultCardContainer.style.opacity = 1;
+                   resultCardContainer.style.transform = 'translateY(0)';
+                   document.getElementById('ai-brainstorm-btn').addEventListener('click', handleAIBrainstorm);
+                   document.getElementById('share-line-btn').addEventListener('click', handleShareLine);
+                }, 100);
+
+                const ctx = document.getElementById('resultChart').getContext('2d');
+                if (quizChart) quizChart.destroy();
+                
+                quizChart = new Chart(ctx, {
+                    type: 'radar',
+                    data: {
+                        labels: quiz.labels,
+                        datasets: [{
+                            label: 'あなたの特性',
+                            data: Object.values(quiz.scores),
+                            backgroundColor: `rgba(32, 184, 199, 0.2)`, 
+                            borderColor: `rgba(32, 184, 199, 1)`,
+                            borderWidth: 2
+                        }]
+                    },
+                    options: {
+                        maintainAspectRatio: false,
+                        scales: { r: { beginAtZero: true, suggestedMax: 8, ticks: { stepSize: 2 } } },
+                        plugins: { legend: { display: false } }
+                    }
+                });
+            }
+            
+            function handleShareLine(e) {
+                e.preventDefault();
+                const quiz = allQuizData[currentQuizKey];
+                const primaryTypeKey = Object.entries(quiz.scores).sort((a,b)=>b[1]-a[1])[0][0];
+                const resultTitle = quiz.results[primaryTypeKey].title;
+                const testName = quiz.name;
+                
+                const shareText = `【診断結果】\n${testName}の結果、私は「${resultTitle}」タイプでした！\n\nこの結果について、さらに詳しいアドバイスをいただけますか？`;
+                const encodedText = encodeURIComponent(shareText);
+                const lineUrl = `https://line.me/R/share?text=${encodedText}`;
+                
+                window.open(lineUrl, '_blank');
+            }
+
+            async function handleAIBrainstorm(e) {
+                const button = e.currentTarget;
+                const interests = document.getElementById('ai-interests-input').value;
+                const resultContainer = document.getElementById('ai-result-container');
+                const quiz = allQuizData[currentQuizKey];
+                const primaryTypeKey = Object.entries(quiz.scores).sort((a,b)=>b[1]-a[1])[0][0];
+                const primaryTypeTitle = quiz.results[primaryTypeKey].title;
+                
+                if (!interests) {
+                    resultContainer.innerHTML = `<p class="text-red-600">興味のあることを入力してください。</p>`;
+                    return;
+                }
+                
+                button.disabled = true;
+                button.innerHTML = `<span class="spinner mr-2"></span> 生成中...`;
+                resultContainer.innerHTML = '';
+                
+                const prompt = `あなたは日本の大学推薦入試を専門とする経験豊富なメンターです。生徒の「${quiz.name}」の結果である「${primaryTypeTitle}」という適性と、以下の興味関心を掛け合わせて、ユニークな探究テーマのアイデアを3つ提案してください。テーマは具体的で、高校生が実行可能なレベルにしてください。各テーマは「**テーマ**」と「**概要**」の形式で記述してください。\n\n興味関心: ${interests}\n\n提案するテーマ:`;
+                
+                try {
+                    const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
+                    const apiKey = "";
+                    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) throw new Error(`API error: ${response.statusText}`);
+                    
+                    const result = await response.json();
+                    
+                    if (result.candidates?.[0]?.content?.parts?.[0]) {
+                        let text = result.candidates[0].content.parts[0].text;
+                        text = text.replace(/\*\*(.*?)\*\*/g, '<strong class="font-bold text-gray-800">$1</strong>');
+                        text = text.replace(/\n/g, '<br>');
+                        resultContainer.innerHTML = `<div class="text-sm text-gray-700 p-4 bg-white rounded-md border">${text}</div>`;
+                    } else {
+                        throw new Error("予期せぬ形式のレスポンスです。");
+                    }
+                } catch (error) {
+                    resultContainer.innerHTML = `<p class="text-red-600">エラーが発生しました。時間をおいて再度お試しください。</p>`;
+                    console.error('Gemini API Error:', error);
+                } finally {
+                    button.disabled = false;
+                    button.innerHTML = `✨ AIに探究テーマのアイデアを相談する`;
+                }
+            }
+
+            function restartQuiz() {
+                resultsArea.classList.add('hidden');
+                resultCardContainer.classList.add('opacity-0', '-translate-y-4');
+                resultCardContainer.innerHTML = "";
+                if (quizChart) { quizChart.destroy(); quizChart = null; }
+                showHomeScreen();
+            }
+
+            homeBtn.addEventListener('click', showHomeScreen);
+            restartQuizBtn.addEventListener('click', restartQuiz);
+            
+            // Initial setup
+            initTestSelection();
+        });
+    </script>
+</body>
+</html>
